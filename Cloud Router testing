@@ -1,0 +1,96 @@
+Both functions use the same requirements: 
+
+functions-framework==3.*
+google-api-python-client
+oauth2client
+
+Below is the python cloud function code to get the custom ip ranges for given router:
+
+import functions_framework
+ 
+from googleapiclient import discovery
+from oauth2client.client import GoogleCredentials
+ 
+credentials = GoogleCredentials.get_application_default()
+service = discovery.build('compute', 'v1', credentials=credentials)
+
+@functions_framework.http
+def get_ranges(request):
+    project = request.args.get('project')
+    region = request.args.get('region')
+    router = request.args.get("router")
+   
+    response = service.routers().get(project=project, region=region, router=router).execute() 
+    return response['bgp'].get('advertisedIpRanges', {})
+Please do not substitute the values in the .get method for your project, region and router, leave it as is in the code. The way to provide actual values here is to include all three values in the query string / parameters, shown below.
+
+As for calling this function, if for example your function's name is get-ranges and the function url is https://us-east1-nyc3-prod-hostnetwork.cloudfunctions.net/get-ranges then the call you would have to make would look something like this:
+
+$ curl -m 70 -X GET "https://us-east1-nyc3-prod-hostnetwork.cloudfunctions.net/get-ranges?project=nyc3-prod-hostnetwork&region=us-east1&router=east1-rtr1" \
+-H "Authorization: bearer $(gcloud auth print-identity-token)"
+Now that we can get the ranges from the router... going forward. Below is the function to set/reset the ranges for a given router. 
+
+import functions_framework
+ 
+from googleapiclient import discovery
+from oauth2client.client import GoogleCredentials
+ 
+credentials = GoogleCredentials.get_application_default()
+service = discovery.build('compute', 'v1', credentials=credentials)
+ 
+@functions_framework.http
+def set_ranges(request):
+    request_json = request.get_json(silent=True)
+ 
+    project = request_json.get('project')
+    region = request_json.get('region')
+    router = request_json.get('router')
+    ranges = request_json.get('ranges')
+ 
+    body = {
+        "bgp": {
+            "advertisedIpRanges": ranges
+        }
+    }
+    
+    service.routers().patch(project=project, region=region, router=router, body=body).execute()
+    return "done\n"
+Please do not substitute the values in the .get method for your project, region and router, leave it as is in the code. The way to provide actual values here is to include all three values in the json, sent within the POST request to the function's endpoint URL.
+
+If your function's name is set-ranges and the function url is https://us-east1-nyc3-prod-hostnetwork.cloudfunctions.net/set-ranges, then this is how you can call the function and provide the values in the json:
+
+$ curl -m 70 -X POST https://us-east1-nyc3-prod-hostnetwork.cloudfunctions.net/set-ranges \
+-H "Authorization: bearer $(gcloud auth print-identity-token)" \
+-H "Content-Type: application/json" \
+-d '{
+    "project": "nyc3-prod-hostnetwork",
+    "region": "us-east1",
+    "router": "east1-rtr1",
+    "ranges": [
+      {
+        "range": "1.1.1.1/32",
+        "description": "some range"
+      },
+      {
+        "range": "2.2.2.2/32",
+        "description": "some other range"
+      }
+    ]
+  }'
+In order to remove all ranges from the cloud router, the same call would look a bit different (notice the empty list is being passed):
+
+$ curl -m 70 -X POST https://us-east1-nyc3-prod-hostnetwork.cloudfunctions.net/set-ranges \
+-H "Authorization: bearer $(gcloud auth print-identity-token)" \
+-H "Content-Type: application/json" \
+-d '{
+    "project": "nyc3-prod-hostnetwork",
+    "region": "us-east1",
+    "router": "east1-rtr1",
+    "ranges": []
+  }'
+You can use the first function get-ranges to check the changes introduced by the calls to set-ranges (alternatively you can also check it in the Console UI). For example, calling the get-ranges again after changing the ranges the way we showed above, should produce the output similar to this:
+
+$ curl -m 70 -X GET "https://us-east1-nyc3-prod-hostnetwork.cloudfunctions.net/get-ranges?project=nyc3-prod-hostnetwork&region=us-east1&router=east1-rtr1" \
+-H "Authorization: bearer $(gcloud auth print-identity-token)"
+ 
+[{"description":"some range","range":"1.1.1.1/32"},{"description":"some other range","range":"2.2.2.2/32"}]
